@@ -1,0 +1,9 @@
+[database]
+129.213.177.15
+
+[web]
+129.80.110.116
+
+[all:vars]
+ansible_user=ubuntu 
+database_local_ip=10.0.0.89
