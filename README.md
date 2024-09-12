@@ -12,7 +12,14 @@ Both instances are placed on the public subnet. The OCI free tier does not allow
 
 ## Ansible
 
-*COMING SOON* The `ansible` folder contains the software configuration to configure the appropriate configuration files on the server and copy the required web and application files.
+The `ansible` folder contains the software configuration to configure the appropriate configuration files on the server and copy the required web and application files.
+
+A few high-level tasks performed by Ansible:
+* copy the Flask app to the instance
+* configure Gunicorn to host the Flask app
+* copy the built React.js site
+* configure NGINX to route traffic to both Gunicorn and the React.js files appropriately
+* configure the database to accept traffic from other hosts
 
 ## How to use this repository
 
