@@ -12,3 +12,6 @@ sudo ufw reload
 # install NGINX
 sudo apt update
 sudo apt install nginx -y
+
+# install PIP for Python3
+sudo apt install python3-pip -y
