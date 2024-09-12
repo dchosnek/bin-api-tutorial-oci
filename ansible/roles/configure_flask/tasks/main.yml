@@ -1,13 +1,4 @@
 ---
-- name: Install Python and Flask dependencies
-  ansible.builtin.apt:
-    name: 
-      - python3
-      - python3-pip
-      - python3-venv
-    state: present
-    update_cache: yes
-
 - name: Install Flask and Gunicorn
   ansible.builtin.pip:
     name: "{{ package_list }}"
@@ -15,27 +6,11 @@
 
 - name: Create Flask app directory
   ansible.builtin.file:
-    path: /opt/flask_app
+    path: /var/www/flask_app
     state: directory
     owner: www-data
     group: www-data
     mode: '0755'
-
-# this seems to be necessary to avoid errors
-- name: Mark /opt/flask_app as a safe Git directory
-  ansible.builtin.command:
-    cmd: "git config --global --add safe.directory /opt/flask_app"
-  become: yes
-
-- name: Clone the Flask app from GitHub
-  ansible.builtin.git:
-    repo: "{{ github_flask }}"
-    dest: /opt/flask_app
-    version: main         # branch
-    depth: 1      # no need to download history
-    single_branch: true
-    update: true
-    force: true
 
 - name: Generate a random string for JWT encoding
   set_fact:
@@ -44,10 +19,21 @@
 - name: Save random string for JWT encoding to repo
   ansible.builtin.copy:
     content: "{{ random_string }}"
-    dest: /opt/flask_app/secret.txt
+    dest: /var/www/flask_app/secret.txt
     owner: root
     group: root
     mode: '0644'
+
+- name: Copy the flask app to /var/www/flask_app
+  ansible.builtin.copy:
+    src: app.py
+    dest: /var/www/flask_app/app.py
+
+- name: Replace localhost with the specific IP in MongoClient connection string
+  ansible.builtin.replace:
+    path: /var/www/flask_app/app.py
+    regexp: 'MongoClient\("mongodb://localhost:27017/"\)'
+    replace: 'MongoClient("mongodb://{{ mongo_local_ip }}:27017/")'
 
 - name: Create Gunicorn systemd service for Flask
   ansible.builtin.copy:
