@@ -1,0 +1,14 @@
+---
+- name: Copy build directory to /var/www/html/
+  ansible.builtin.copy:
+    src: build/
+    dest: /var/www/html/
+    owner: www-data
+    group: www-data
+    mode: '0755'
+
+
+- name: Create new config.json file with current IP address
+  ansible.builtin.template:
+      src: config_json.j2
+      dest: /var/www/html/config.json
