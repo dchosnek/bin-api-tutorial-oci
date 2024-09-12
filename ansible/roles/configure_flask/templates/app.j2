@@ -1,0 +1,284 @@
+# app.py
+from flask import Flask, jsonify, request, abort, g
+from flask_cors import CORS
+import jwt
+from datetime import datetime, timedelta, timezone
+import uuid
+from pymongo import MongoClient
+
+DATABASE_NAME = "mydatabase"
+COLLECTION_NAME = "bins"
+with open('secret.txt', 'r') as file:
+    SECRET_PHRASE = file.read().strip()
+
+mongoclient = MongoClient("mongodb://{{ mongo_local_ip }}:27017/")
+collection = mongoclient[DATABASE_NAME][COLLECTION_NAME]
+
+app = Flask(__name__)
+CORS(app, supports_credentials=True)
+
+# =============================================================================
+#   APP before_request
+# -----------------------------------------------------------------------------
+@app.before_request
+def authenticate():
+
+    # validate token
+    # ---------------------------------
+    def is_token_valid(header):
+        if 'Bearer' not in header:
+            return False
+        token = header.replace('Bearer ', '')
+        try:
+            decoded = jwt.decode(token, SECRET_PHRASE, algorithms=["HS256"])
+        except Exception as error:
+            return False
+        # set this global flask variable for all endpoints to access
+        g.email = decoded['email']
+        return True
+    # ---------------------------------
+
+    # Get the endpoint name of the current request
+    endpoint = request.endpoint
+
+    # Ignore auth for OPTIONS, which is used for CORS
+    if request.method == "OPTIONS":
+        return
+
+    # Check if the endpoint is in the list of exempt routes
+    if endpoint in ['get_api_info','create_token','verify_token']:
+        return  # Skip authentication for this endpoint
+    
+    # Proceed with authentication otherwise
+    auth_header = request.headers.get('Authorization')
+
+    if not auth_header or not is_token_valid(auth_header):
+        abort(401)
+
+    return
+
+# =============================================================================
+#   API endpoint: GET about
+# -----------------------------------------------------------------------------
+@app.route('/api/v1/about',methods=['GET'])
+def get_api_info():
+    # this just returns a static value
+    body = dict(
+        SpiritAnimal="Magic Pony", 
+        CreationDate="December 22, 2023",
+        Server="Flask"
+    )
+    return jsonify(body), 200
+
+# =============================================================================
+#   API endpoint: GET /token?email=:email
+# -----------------------------------------------------------------------------
+@app.route('/api/v1/token',methods=['GET'])
+def create_token():
+    # email is a required parameter
+    email = request.args.get("email")
+    if not email:
+        return "", 404
+
+    # find if the user exists in the database
+    user = collection.find_one({ "email": email },{ "jwt": 1 })
+
+    refresh_token = False
+
+    # this if/else determines if there are problems with the record in the DB:
+    # - missing record
+    # - missing "jwt" field
+    # - empty "jwt" field
+    if user is None:                    # missing user
+        # initialize the user if the user does not exist
+        collection.insert_one({ 
+            "email": email, 
+            "created": datetime.now(tz=timezone.utc),
+            "jwt": ""
+        })
+        refresh_token = True
+        existing_token = None
+    elif user.get("jwt", "") == "":     # missing token
+        refresh_token = True
+        existing_token = None
+    else:
+        existing_token = user.get("jwt", None)
+
+    # validate if the token is good
+    try:
+        jwt.decode(existing_token, SECRET_PHRASE, algorithms=["HS256"])
+    except:
+        # there is some kind of problem with the token -- it might be expired
+        # or generated with a different secret than the one currently in use
+        refresh_token = True
+    
+    if refresh_token:
+        # create a new token
+        expiration = datetime.now(tz=timezone.utc)+timedelta(hours=4)
+        payload = dict(
+            email=email,
+            exp=expiration
+        )
+        new_token = jwt.encode(payload, SECRET_PHRASE, algorithm="HS256")
+
+        # create the response to the client
+        body = dict(
+            token=new_token,
+            expiration=expiration.strftime('%d %b %Y, %H:%M:%S %Z')
+        )
+
+        # save the token to the DB and clear any existing bins
+        collection.update_one(
+            {"email": email},                       # query
+            {"$set":{"jwt": new_token,"bins": {}}}  # update
+        )
+
+        return jsonify(body), 200
+    else:
+        return "", 400
+
+
+# =============================================================================
+#   API endpoint: GET token/:token (verify token)
+# -----------------------------------------------------------------------------
+@app.route('/api/v1/token/<token>', methods=['GET'])
+def verify_token(token):
+    try:
+        decoded = jwt.decode(token, SECRET_PHRASE, algorithms=["HS256"])
+        status_code = 200
+    except jwt.ExpiredSignatureError:
+        status_code = 401
+    # this is a catch-all for the many ways a token could be incorrect
+    except:
+        status_code = 400
+
+    # attempt to convert the 'exp' field to a datetime string; this will fail
+    # if the decode failed, hence the use of try/except here
+    try:
+        timestamp = datetime.fromtimestamp(decoded["exp"])
+        expiration = timestamp.strftime('%d %b %Y, %H:%M:%S UTC')
+    except:
+        expiration = "unknown"
+
+    # if there is a problem with the token, return an empty body
+    if status_code == 200:
+        body = dict(
+            token=token,
+            expiration=expiration
+        )
+        return jsonify(body), status_code
+    else:
+        return "", status_code
+
+
+# =============================================================================
+#   API endpoint: bins (GET and POST)
+# -----------------------------------------------------------------------------
+def handle_get_bin_list():
+    bin_list = collection.find_one({"email":g.email},{"bins":1,"_id":0})
+    body = dict(
+        bins = [key for key in bin_list["bins"]]
+    )
+    return jsonify(body), 200
+
+def handle_create_bin():
+    bin_id = str(uuid.uuid4())
+    field_path = F"bins.{bin_id}"
+    collection.update_one(
+        {"email": g.email},         # query for the record to update
+        {"$set": {field_path: ""}}  # new value
+    )
+    body = dict(binId=bin_id, contents="")
+    return jsonify(body), 201
+
+
+@app.route('/api/v1/bins', methods=['GET','POST','OPTIONS'])
+def list_bins():
+    if request.method == 'GET':
+        return handle_get_bin_list()
+    elif request.method == 'POST':
+        return handle_create_bin()
+    elif request.method == 'OPTIONS':
+        return "", 204
+
+
+# =============================================================================
+#   API endpoint: bins (GET and POST)
+# -----------------------------------------------------------------------------
+def handle_get_bin_contents(bin_id):
+    # This pipeline pushes all of the work onto the mongo server. It will
+    # return the specified binId and its contents so that this function only
+    # has to return it.
+    pipeline = [
+        {
+            "$match": {
+                "email": g.email
+            }
+        }, {
+            "$project": {
+                "binId": F"{bin_id}", 
+                "contents": F"$bins.{bin_id}", 
+                "_id": 0
+            }
+        }
+    ]
+    # Aggregate always returns a cursor even though we know in this case there
+    # is only one return value.
+    cursor = collection.aggregate(pipeline)
+    body = next(cursor)
+
+    # the database aggregation returns only the bin_id if the bin does not
+    # exist, so if the "contents" key is not in the return value, return 404
+    if "contents" in body:
+        return jsonify(body), 200
+    else:
+        return "", 404
+
+def handle_update_bin_contents(bin_id):
+    # get the new bin value from the request
+    request_data = request.get_json()
+    contents = request_data.get("contents", "")
+
+    # update the database but only if the bin_id already exists
+    operation = collection.update_one(
+        {
+            "email": g.email,                   # query cond 1
+            F"bins.{bin_id}": {"$exists": True} # query cond 2
+        },                     
+        {"$set":{F"bins.{bin_id}": contents}}   # update
+    )
+    body = dict(binId=bin_id, contents=contents)
+
+    # if the bin_id did not exist, then return 404
+    if operation.matched_count:
+        return jsonify(body), 200
+    else:
+        return "", 404
+
+def handle_delete_bin(bin_id):
+    # no harm in deleting a bin that doesn't exist; will check for that later
+    operation = collection.update_one(
+        {"email": g.email},                     # query
+        {"$unset":{F"bins.{bin_id}": ""}}       # update
+    )
+
+    # if no modification was done, then the bin did not exist
+    if operation.modified_count:
+        return "", 204
+    else:
+        return "", 404
+
+@app.route('/api/v1/bins/<bin_id>', methods=['GET','PUT','DELETE'])
+def bin_content(bin_id):
+    if request.method == 'GET':
+        return handle_get_bin_contents(bin_id)
+    elif request.method == 'PUT':
+        return handle_update_bin_contents(bin_id)
+    elif request.method == 'DELETE':
+        return handle_delete_bin(bin_id)
+
+# =============================================================================
+#   MAIN
+# -----------------------------------------------------------------------------
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=8080)
