@@ -19,3 +19,8 @@ output "database_ip" {
   value       = oci_core_instance.db1.public_ip
   description = "public IP for database server"
 }
+
+output "database_local_ip" {
+  value       = oci_core_instance.db1.private_ip
+  description = "private IP for database server"
+}
