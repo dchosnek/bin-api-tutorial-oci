@@ -1,7 +1,12 @@
 ---
 - name: Install Flask and Gunicorn
   ansible.builtin.pip:
-    name: "{{ package_list }}"
+    name:
+      - Flask
+      - flask-cors
+      - gunicorn
+      - pyjwt
+      - pymongo
     executable: pip3
 
 - name: Create Flask app directory
