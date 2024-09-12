@@ -1,3 +1,14 @@
+# Terraform config for Bin API Tutorial in OCI
+
+This Terraform configuration creates/maintains the following:
+* one VCN (virtual cloud network)
+* two subnets (although only the public subnet is used)
+* one internet gateway to allow external connectivity
+* one route table to give instances an outbound route to the internet
+* one security list to allow inbound SSH and all outbound traffic
+* two network security groups to allow external connections on port 80 to the web server and to allow the web server to access the database server on the appropriate port
+* two instances, each with its own cloud-init script
+
 ## Requirements
 
 | Name | Version |
@@ -46,4 +57,5 @@ No modules.
 | Name | Description |
 |------|-------------|
 | <a name="output_database_ip"></a> [database\_ip](#output\_database\_ip) | public IP for database server |
+| <a name="output_database_local_ip"></a> [database\_local\_ip](#output\_database\_local\_ip) | private IP for database server |
 | <a name="output_web_ip"></a> [web\_ip](#output\_web\_ip) | public IP for web server |
