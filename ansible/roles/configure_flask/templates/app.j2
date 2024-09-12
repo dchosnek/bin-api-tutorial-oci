@@ -11,7 +11,7 @@ COLLECTION_NAME = "bins"
 with open('secret.txt', 'r') as file:
     SECRET_PHRASE = file.read().strip()
 
-mongoclient = MongoClient("mongodb://{{ mongo_local_ip }}:27017/")
+mongoclient = MongoClient("mongodb://{{ database_local_ip }}:27017/")
 collection = mongoclient[DATABASE_NAME][COLLECTION_NAME]
 
 app = Flask(__name__)
