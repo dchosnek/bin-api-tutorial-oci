@@ -25,23 +25,19 @@
     mode: '0644'
 
 - name: Copy the flask app to /var/www/flask_app
-  ansible.builtin.copy:
-    src: app.py
-    dest: /var/www/flask_app/app.py
-
-- name: Replace localhost with the specific IP in MongoClient connection string
-  ansible.builtin.replace:
-    path: /var/www/flask_app/app.py
-    regexp: 'MongoClient\("mongodb://localhost:27017/"\)'
-    replace: 'MongoClient("mongodb://{{ mongo_local_ip }}:27017/")'
+  ansible.builtin.template:
+      src: app.j2
+      dest: /var/www/flask_app/app.py
 
 - name: Create Gunicorn systemd service for Flask
   ansible.builtin.copy:
     src: gunicorn.conf
     dest: /etc/systemd/system/gunicorn.service
 
-- name: Start and enable Gunicorn service
-  ansible.builtin.systemd:
+# a new secret is created every time this role is executed so the service
+# must be restarted
+- name: Enable and restart Gunicorn service
+  ansible.builtin.systemd_service:
     name: gunicorn
-    state: started
+    state: restarted
     enabled: yes
