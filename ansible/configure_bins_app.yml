@@ -1,0 +1,39 @@
+---
+# PLAY 1: Configure the database instance
+- name: Update MongoDB configuration to allow external connections
+  hosts: database
+  become: true
+  gather_facts: false
+  tasks:
+
+    - name: Update the bindIp line in mongod.conf to allow IP connections
+      ansible.builtin.lineinfile:
+        path: /etc/mongod.conf
+        regexp: '^  bindIp:.*'
+        line: '  bindIp: 127.0.0.1,{{ database_local_ip }}'
+        state: present
+        backup: yes   # Backup the file before editing
+      register: mongo_config
+
+    - name: Restart MongoDB if config was updated
+      ansible.builtin.systemd:
+        name: mongod
+        state: restarted
+        enabled: yes
+      when: mongo_config.changed
+
+# PLAY 2: Configure the web/app instance
+- name: Configure the web/app server
+  become: true
+  hosts: web
+  gather_facts: false
+  roles:
+    - configure_flask
+    - configure_nginx
+    - deploy_react_app
+
+  tasks:
+
+    - name: Display the app link
+      ansible.builtin.debug:
+        msg: Access the application at http://{{ inventory_hostname }}/
