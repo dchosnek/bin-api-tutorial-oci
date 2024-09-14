@@ -3,7 +3,6 @@
   ansible.builtin.pip:
     name:
       - Flask
-      - flask-cors
       - gunicorn
       - pyjwt
       - pymongo
